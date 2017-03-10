@@ -820,25 +820,125 @@ really actively using Docker. I personally run them on a daily cronjob.
 
 22) Deploy to Heroku by Ray:
 per: https://devcenter.heroku.com/articles/container-registry-and-runtime
+per: Heroku tutorial "Local Development with Docker Compose" at:
+  https://devcenter.heroku.com/articles/local-development-with-docker-compose
 
-Make sure you have a working Docker installation (eg. docker ps) and that
-you’re logged in to Heroku (heroku login).
+  a) Pushing your containers to Heroku
+  When you’re satisfied with the build, you can then push the web frontend
+  directly to the Heroku container registry for deployment (popular CI/CD tools are also supported).
+    $ heroku container:push web
+    Sending build context to Docker daemon 1.519 MB
+    Step 1/12 : FROM ruby:2.3-slim
+     ---> b8244f7bc643
+     ......
+     Step 9/12 : COPY . .
+      ---> f7bf6aebd2c4
+     Removing intermediate container e6ee8a749090
+     Step 10/12 : RUN bundle exec rake RAILS_ENV=production DATABASE_URL=postgresql://user:pass@127.0.0.1/dbname ACTION_CABLE_ALLOWED_REQUEST_ORIG
+     INS=foo,bar SECRET_TOKEN=dummytoken assets:precompile
+      ---> Running in d7c83026a548
+     51fb141b01ce: Pushed
+     7989c5b80712: Pushed
+     d17d48b2382a: Pushed
+     latest: digest: sha256:43efbd8bb8a
 
-a) Install the container-registry plugin by running:
-$ heroku plugins:install heroku-container-registry
+  b) View intermediate web site in browser:
+     https://blooming-retreat-28156.herokuapp.com/
 
-b) Log in to the Heroku container registry:
-$ heroku container:login
+     Displays application error, check logs.
+      $ heroku logs --app blooming-retreat-28156
 
-c) Navigate to the app’s directory and create a Heroku app:
-$ heroku create
-Creating salty-fortress-4191... done, stack is cedar-14
-https://salty-fortress-4191.herokuapp.com/ | https://git.heroku.com/salty-fortress-4191.git
+     Logs show:
+      heroku[router]: at=error code=H14 desc="No web processes running" method=GET path="/" host=blooming-retreat-
 
-d) Pushing an existing image
-To push an image to Heroku, such as one pulled from Docker Hub, tag it and push it according to this naming template:
-  $ docker tag <image> registry.heroku.com/<app>/<process-type>
-  $ docker push registry.heroku.com/<app>/<process-type>
+     To fix per Heroku Error code doc at: https://devcenter.heroku.com/articles/error-codes#h14-no-web-dynos-running
+      $ heroku ps:scale web=1
+      heroku says:
+        Scaling dynos... done, now running web at 1:Free
 
-After the image has successfully been pushed, open your app:
-$ heroku open -a <app>
+  c) View again in browser:
+     https://blooming-retreat-28156.herokuapp.com/
+
+    Displays application error, check logs.
+      Scaled to web@1:Free by user xxxxx
+      heroku[web.1]: Starting process with command `/bin/sh -c puma\ -C\ config/puma.rb`
+      app[web.1]: [6] Puma starting in cluster mode...
+      app[web.1]: [6] * Environment: development
+      app[web.1]: [6] * Listening on tcp://
+      app[web.1]: /usr/local/bundle/gems/puma-3.6.2/lib/puma/binder.rb:266:in
+          `initialize': getaddrinfo: Name or service not known (SocketError)
+        ....
+      heroku[router]: at=error code=H10 desc="App crashed" method=GET path="/"
+
+  d) Add redis and postgres per Heroku tutorial.
+
+  The python application depends on Postgres and Redis, which you do not push to
+  Heroku. Instead, use Heroku add-ons in production.
+
+  Use Heroku add-ons in production
+  For local development: use official Docker images, such as Postgres and Redis.
+  For staging and production: use Heroku add-ons, such as Heroku Postgres and
+  Heroku Redis. Using official Docker images locally and Heroku add-ons in
+  production provides you with the best of both worlds:
+  Parity: You get parity by using the same services on your local machine as you do in production
+  Reduced ops burden: By using add-ons, Heroku – or the add-on provider –
+  takes the ops burden of replication, availability, and backup.
+
+  Provision heroku app via heroko account dashboard.
+    Heroku dashboard -> my person apps -> blooming-retreat-28156 -> resources
+      Add add-on Heroku Postgres :: Database
+      Add add-on Heroku Redis :: Redis
+      Restart all dynos
+
+  d) Try2 - View app again. open your app:
+  $ heroku open -a <app> or via browser https://blooming-retreat-28156.herokuapp.com/
+
+  Displays application error, check logs.
+   $ heroku logs --app blooming-retreat-28156
+
+  Logs show:
+  heroku[router]: at=error code=H10 desc="App crashed" method=GET path="/"
+
+  e) Oops! forgot to init database.
+    Shell into remote heroku web app, has rails utils.
+    $ heroku apps
+       ....
+       $ heroku run bash --app blooming-retreat-28156
+       Running bash on ⬢ blooming-retreat-28156... up, run.2269 (Free)
+        ~ $ ruby -v
+        ruby 2.3.3p222 (2016-11-21 revision 56859) [x86_64-linux]
+        ~ $ rails -v
+        Rails 5.0.1
+        ~ $
+
+        Reset the database
+        ~ $ rails db:reset
+
+        Fails with:
+        rails aborted!
+        NoMethodError: undefined method `split' for nil:NilClass
+        /my_dockerized_app/config/application.rb:57:in `<class:Application>'
+        /my_dockerized_app/config/application.rb:10:in `<module:MyDockerizedApp>'
+
+        Source code indicates we need environmental variables:
+        line 56  # Action Cable setting to allow connections from these domains.
+        line 57  origins = ENV['ACTION_CABLE_ALLOWED_REQUEST_ORIGINS'].split(',')
+
+        ~ $ env
+        GEM_HOME=/usr/local/bundle
+        REDIS_URL=redis://h:ompute-1.amazonaws.com:37399
+        DYNO=run.2269
+        PATH=/usr/local/bundle/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        RUBY_DOWNLOAD_SHA256=1a4fa8c2885734ba37b97ffdb4a19b8fba0e89826
+        RUBY_MAJOR=2.3
+        HOME=/my_dockerized_app
+        INSTALL_PATH=/my_dockerized_app
+        PORT=13877
+
+        heroku logs for puma server startup say:
+        app[web.1]: [6] * Environment: development
+
+        Sooo... we need have heroku set env data.
+
+    Migrate the database
+      docker-compose exec website rails db:migrate
